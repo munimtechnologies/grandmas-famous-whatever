@@ -1,0 +1,802 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grandma's Famous Whatever</title>
+<!-- Grandma's Famous Whatever v1.0.1. Made by MV2 of Munim, Inc. with AI agents for The WORST Game Jam (theme: Grandma's Instructions). Apache-2.0. -->
+<style>
+html,body{margin:0;height:100%;background:#5b2a5e;font-family:"Comic Sans MS","Comic Sans","Chalkboard SE","Comic Neue",cursive;color:#2b1d0e;overflow:hidden}
+#wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+canvas{display:block;width:min(100vw,160vh);height:min(62.5vw,100vh);cursor:none;touch-action:none;background:#2e8b84}
+.panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-1.5deg);width:min(640px,88vw);max-height:84vh;overflow:auto;background:#f7e7a1;border:6px dashed #e0457b;padding:18px 24px;box-shadow:12px 12px 0 #1b6e2f;z-index:5}
+.panel h1{margin:0 0 8px;font-size:34px;color:#c2185b;text-shadow:3px 3px 0 #ffeb3b}
+.panel h2{margin:4px 0 8px;font-size:24px}
+.panel p{margin:8px 0;font-size:17px;line-height:1.35}
+.panel .small{font-size:13px;opacity:.85}
+button{font:inherit;font-size:19px;background:#8bc34a;border:4px solid #e040fb;padding:8px 16px;margin:6px 8px 6px 0;cursor:pointer;color:#311b92;transform:rotate(1deg)}
+button:hover,button:focus{background:#cddc39;outline:3px dotted #311b92}
+table{border-collapse:collapse;width:100%;font-size:15px;margin:8px 0}
+td{border:2px solid #a1887f;padding:5px 7px;vertical-align:top}
+td.ok{background:#dcedc8}td.bad{background:#ffcdd2}
+#snd{position:fixed;top:8px;right:8px;z-index:6;font-size:15px;padding:4px 10px}
+#credit{position:fixed;left:0;right:0;bottom:0;z-index:4;font-size:12px;text-align:center;background:rgba(255,235,59,.82);padding:3px 6px;pointer-events:none}
+#selftest{position:fixed;inset:20px;z-index:9;background:#111;color:#cfc;font:13px/1.4 monospace;white-space:pre-wrap;overflow:auto;padding:14px;border:3px solid #6f6}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="960" height="600" aria-label="Grandma's kitchen"></canvas></div>
+<button id="snd" type="button">🔊 Sound: on</button>
+
+<div id="title" class="panel">
+  <h1>Grandma's Famous Whatever</h1>
+  <p>Grandma left you her famous recipe. She did not say what it is. She did not say how much of anything. She will taste it when you're done.</p>
+  <p><b>Controls:</b> the mouse is your oven mitt. It's a bit slow, and a bit to the right. Click to do things. Keys if you must: <b>Space</b> pour, <b>S</b> shake, <b>arrow keys</b> stir and turn, <b>Enter</b> "Done, Grandma", <b>M</b> sound.</p>
+  <p>Follow her instructions. Or work out what she <i>meant</i>.</p>
+  <button id="start" type="button">Start baking</button>
+  <p class="small">An entry for The WORST Game Jam (theme: Grandma's Instructions). No flashing lights. The sound is bad on purpose, but quiet. Takes about 2 minutes.</p>
+  <p class="small" id="best"></p>
+</div>
+
+<div id="judge" class="panel hidden" aria-live="polite">
+  <h1>Grandma tastes it...</h1>
+  <h2 id="j-hearts"></h2>
+  <p id="j-line"></p>
+  <p>You made: <b id="j-name"></b></p>
+  <table id="j-table"></table>
+  <button id="again" type="button">Bake it again</button>
+  <button id="totitle" type="button">Title</button>
+</div>
+
+<div id="credit">Made by MV2 of Munim, Inc. with AI agents: the code, art and sound are all AI-made (no premade assets). Apache-2.0.</div>
+<pre id="selftest" class="hidden"></pre>
+
+<script id="logic">
+// Pure game rules: no DOM, so tests can run them under Node.
+const VERSION="1.0.1";
+const STEPS=["flour","salt","stir","oven","bake"];
+const LABELS={flour:"Flour",salt:"Salt",stir:"Stir",oven:"Oven",bake:"Bake"};
+const SAID={
+  flour:"Add some flour. Not too much, not too little. You'll know.",
+  salt:"Then a pinch of salt. MY pinch, mind. Not one of your little pinches.",
+  stir:"Stir it till it looks right. The other way, like your grandfather did.",
+  oven:"Put the oven on a nice temperature.",
+  bake:"Bake it for a while. Take it out when it's done. You'll smell it."
+};
+const MEANT={
+  flour:"'You'll know' means: when Biscuit the dog sneezes. That's 7 to 9 handfuls. The second sneeze means too much.",
+  salt:"Grandma's pinch is the whole shaker. It even says so on the label. 11 or 12 shakes in the bowl.",
+  stir:"'Looks right' means: the colour of her cardigan. 'The other way' means whichever way you started.",
+  oven:"Her oven runs cold (read Bert's sticky note). 'Nice' on her oven means 'Toasty'.",
+  bake:"'You'll smell it' means: when Mrs. Patel's cat turns up at the window. The smoke is NOT normal."
+};
+const OVEN_LABELS=["Off","Brr","Meh","Nice","Toasty","Grandpa's Chili","The Sun"];
+const OVEN_SCORES=[0,0.05,0.2,0.5,1,0.4,0];
+const OVEN_OK=4;
+const FLOUR_OK=[7,9], FLOUR_FALLOFF=4;
+const SALT_OK=11, SALT_MAX=12;
+const STIR_OK=[0.42,0.58], STIR_FALLOFF=0.3, STIR_PER_TURN=0.12, STIR_MAX=1.2;
+const BAKE_OK=[8,11], BAKE_FALLOFF=5, BAKE_SMOKE=13, BAKE_ALARM=15, BAKE_MAX=20;
+const STIR_STOPS=[[0,[244,236,208]],[0.5,[156,175,58]],[STIR_MAX,[107,90,74]]];
+
+function clamp(x,a,b){return Math.max(a,Math.min(b,x));}
+function r2(x){return Math.round(x*100)/100;}
+function band(x,lo,hi,falloff){
+  if(x>=lo&&x<=hi) return 1;
+  const d=x<lo?lo-x:x-hi;
+  return r2(clamp(1-d/falloff,0,1));
+}
+function scoreFlour(h){return band(h,FLOUR_OK[0],FLOUR_OK[1],FLOUR_FALLOFF);}
+function scoreSalt(s){
+  s=clamp(Math.round(s),0,SALT_MAX);
+  return s>=SALT_OK?1:r2(s/SALT_OK*0.6);
+}
+function scoreStir(p){return band(p,STIR_OK[0],STIR_OK[1],STIR_FALLOFF);}
+function dialIndex(a){return clamp(Math.round(a),0,OVEN_LABELS.length-1);}
+function scoreOven(i){return OVEN_SCORES[clamp(Math.round(i),0,OVEN_SCORES.length-1)];}
+function scoreBake(t){return band(t,BAKE_OK[0],BAKE_OK[1],BAKE_FALLOFF);}
+function catVisible(t){return t>=BAKE_OK[0]&&t<=BAKE_OK[1];}
+function smokeLevel(t){return clamp((t-BAKE_SMOKE)/5,0,1);}
+function alarmSinging(t){return t>=BAKE_ALARM;}
+
+// st={first:0|1|-1,p:0}. The first direction you stir is "wrong": it un-stirs.
+function stirStep(st,dTheta){
+  if(!dTheta) return {first:st.first,p:st.p,wrong:false};
+  const dir=Math.sign(dTheta), first=st.first||dir, wrong=dir===first;
+  const p=clamp(st.p+(wrong?-1:1)*Math.abs(dTheta)/(2*Math.PI)*STIR_PER_TURN,0,STIR_MAX);
+  return {first,p,wrong};
+}
+function stirColor(p){
+  p=clamp(p,0,STIR_MAX);
+  for(let i=1;i<STIR_STOPS.length;i++){
+    const [p0,c0]=STIR_STOPS[i-1],[p1,c1]=STIR_STOPS[i];
+    if(p<=p1){const f=(p-p0)/(p1-p0);return c0.map((c,k)=>Math.round(c+(c1[k]-c)*f));}
+  }
+  return STIR_STOPS[STIR_STOPS.length-1][1].slice();
+}
+const CARDIGAN=stirColor(0.5);
+
+// run={flour:handfuls,salt:shakes in bowl,stir:p,oven:dial index,bake:seconds}
+function scoreRun(run){
+  const s={flour:scoreFlour(run.flour),salt:scoreSalt(run.salt),stir:scoreStir(run.stir),oven:scoreOven(run.oven),bake:scoreBake(run.bake)};
+  s.total=r2(STEPS.reduce((a,k)=>a+s[k],0));
+  return s;
+}
+const VERDICTS=[
+  [4.75,5,"Oh! Exactly like mine. Who told you the secret?"],
+  [3.75,4,"Lovely, dear. Nearly mine. Nearly."],
+  [2.5,3,"It's... different. I'll take some home for Biscuit."],
+  [1.25,2,"Did you follow my instructions at all?"],
+  [0,1,"I'm calling your mother."]
+];
+function verdict(total){
+  for(const [min,hearts,line] of VERDICTS) if(total>=min) return {hearts,line};
+  return {hearts:0,line:VERDICTS[VERDICTS.length-1][2]};
+}
+function bakedName(run,s){
+  if(s.total>=4.75) return "Grandma's Famous Biscuits";
+  if(run.bake>=BAKE_ALARM) return "Charcoal (artisanal)";
+  if(run.oven===0) return "A Bowl of Cold Paste";
+  if(run.oven===6) return "A Small Sun";
+  if(run.flour<3) return "Soup, Somehow";
+  if(run.flour>12) return "A Decorative Pillow";
+  if(run.salt<=2) return "A Sad Bland Puck";
+  if(run.stir>0.9) return "A Grey Brick";
+  if(run.bake<5) return "Warm Goo";
+  return "A Biscuit-Adjacent Object";
+}
+
+function selfTestLogic(){
+  const P=[];
+  const ok=(c,m)=>{if(!c)P.push(m);};
+  for(const k of STEPS){ok(SAID[k]&&MEANT[k]&&LABELS[k],"missing text for step "+k);}
+  ok(OVEN_LABELS.length===OVEN_SCORES.length,"oven labels and scores differ in length");
+  ok(OVEN_LABELS[OVEN_OK]==="Toasty"&&scoreOven(OVEN_OK)===1,"Toasty must be the right oven setting");
+  ok(scoreOven(OVEN_LABELS.indexOf("Nice"))<1,"'Nice' must not be perfect (her oven runs cold)");
+  // a perfect run and a literal-minded run
+  const perfect={flour:8,salt:12,stir:0.5,oven:4,bake:9.5};
+  const ps=scoreRun(perfect);
+  ok(ps.total===5,"perfect run scores "+ps.total+", not 5");
+  ok(verdict(ps.total).hearts===5,"perfect run does not get 5 hearts");
+  ok(bakedName(perfect,ps)==="Grandma's Famous Biscuits","perfect run makes "+bakedName(perfect,ps));
+  const literal={flour:4,salt:1,stir:0.2,oven:3,bake:5};
+  const ls=scoreRun(literal);
+  ok(ls.total<2.5,"literal run scores too well: "+ls.total);
+  // every score in [0,1], 1 inside the band, never rising away from it
+  const sweeps=[[scoreFlour,0,20,0.05,FLOUR_OK],[scoreStir,0,STIR_MAX,0.005,STIR_OK],[scoreBake,0,BAKE_MAX,0.05,BAKE_OK]];
+  for(const [f,a,b,dx,okb] of sweeps){
+    let prev=-1,peaked=false;
+    for(let x=a;x<=b+1e-9;x+=dx){
+      const v=f(x);
+      if(!(v>=0&&v<=1)){P.push(f.name+"("+x.toFixed(3)+")="+v+" is out of range");break;}
+      if(x>=okb[0]+1e-9&&x<=okb[1]-1e-9&&v!==1){P.push(f.name+"("+x.toFixed(3)+") should be 1");break;}
+      if(v<prev) peaked=true;
+      if(peaked&&v>prev+1e-9){P.push(f.name+" rises again after falling at "+x.toFixed(3));break;}
+      if(!peaked&&prev>=0&&v<prev-1e-9){peaked=true;}
+      prev=v;
+    }
+  }
+  for(let s=0;s<=SALT_MAX;s++){
+    const v=scoreSalt(s);
+    ok(v>=0&&v<=1,"scoreSalt("+s+") out of range");
+    if(s>0) ok(v>=scoreSalt(s-1),"scoreSalt falls at "+s);
+  }
+  ok(scoreSalt(1)<0.1,"one little pinch should taste bland");
+  ok(scoreFlour(BAKE_MAX)===0&&scoreBake(BAKE_MAX)===0,"the burnt end should score 0");
+  // stirring: the first direction un-stirs, the other way reaches the cardigan colour in about 4 to 5 turns
+  let st={first:0,p:0};
+  st=stirStep(st,0.3);
+  ok(st.first===1&&st.wrong&&st.p===0,"first stir direction should be the wrong one");
+  let turns=0;
+  while(scoreStir(st.p)<1&&turns<20){for(let i=0;i<20;i++) st=stirStep(st,-Math.PI*2/20);turns++;}
+  ok(turns>=3&&turns<=6,"reaching the cardigan colour took "+turns+" turns");
+  ok(!st.wrong,"the other way should not be wrong");
+  for(let i=0;i<200;i++) st=stirStep(st,-0.5);
+  ok(st.p<=STIR_MAX&&scoreStir(st.p)===0,"overstirring should cap and score 0");
+  ok(stirStep({first:-1,p:0.3},0).p===0.3,"no movement should change nothing");
+  const cc=stirColor(0.5);
+  ok(cc.join()===CARDIGAN.join()&&cc.join()==="156,175,58","stir colour at 0.5 should be the cardigan");
+  ok(stirColor(0).join()==="244,236,208"&&stirColor(99).join()==="107,90,74","stir colour ends are wrong");
+  // the cat is the cue, and it only shows in the right window
+  for(let t=0;t<=BAKE_MAX;t+=0.25) ok(catVisible(t)===(scoreBake(t)===1),"cat cue and bake score disagree at "+t);
+  ok(smokeLevel(BAKE_SMOKE)===0&&smokeLevel(BAKE_MAX)===1,"smoke ramp is wrong");
+  ok(!alarmSinging(BAKE_OK[1])&&alarmSinging(BAKE_ALARM),"alarm timing is wrong");
+  // verdicts cover 0 to 5 and hearts never drop as the total rises
+  let lastH=0;
+  for(let t=0;t<=5;t+=0.01){
+    const v=verdict(r2(t));
+    ok(v.line&&v.hearts>=1&&v.hearts<=5,"no verdict for "+t);
+    ok(v.hearts>=lastH,"hearts fall at "+t);
+    lastH=v.hearts;
+  }
+  // every combination gets a name
+  for(const flour of [0,2,8,14]) for(const salt of [0,1,12]) for(const stir of [0,0.5,1.1]) for(const oven of [0,3,4,6]) for(const bake of [2,9,16]){
+    const r={flour,salt,stir,oven,bake},n=bakedName(r,scoreRun(r));
+    if(typeof n!=="string"||!n){P.push("no name for "+JSON.stringify(r));}
+  }
+  return P;
+}
+</script>
+
+<script>
+"use strict";
+const W=960,H=600;
+const cv=document.getElementById("c"),ctx=cv.getContext("2d");
+const $=id=>document.getElementById(id);
+const BOWL={x:400,y:395,rx:130,ry:52};
+const DONE={x:775,y:545,w:175,h:46};
+const DIAL={x:830,y:282,r:32};
+const OVEN={x:715,y:205,w:235,h:395};
+const GLASS={x:745,y:400,w:175,h:100};
+const WINDOW={x:548,y:30,w:140,h:115};
+const NOTE={x:842,y:112};
+const DODGE=[{x:770,y:525},{x:520,y:470},{x:250,y:250},{x:600,y:300}];
+const TAKE={w:170,h:50};
+const MELODY=[60,64,67,66,64,61,60,null,62,65,69,68,65,63,62,null,67,67,64,60,62,null,59,60];
+
+let scene="title",step=0,stepT=0,boilT=0,boil=0;
+let mouse={x:480,y:300,down:false},mitt={x:480,y:300,px:480,py:300,speed:0};
+let clicked=false,keys={},pressed={};
+let run={},flour=0,spilled=0,salt=0,saltUsed=0,stir={first:0,p:0},stirAngle=null,stirAcc=0,lastWrongAt=-9;
+let dial={a:0,v:0,drag:false},lastIdx=0,settleT=0;
+let bakeT=0,take={x:DODGE[0].x,y:DODGE[0].y},dodges=0,catSeen=false,smokeSaid=false,alarmSaid=false;
+let dog={state:"idle",t:0},specks=[],smoke=[];
+let bubble={text:"",shown:0},reaction={text:"",t:0};
+let musicAt=0,musicI=0;
+
+// ---------- sound: synthesized, bad on purpose, quiet ----------
+const Snd={ac:null,master:null,on:true,
+  init(){
+    if(this.ac) return;
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC) return;
+    this.ac=new AC();
+    this.master=this.ac.createGain();
+    this.master.gain.value=this.on?0.5:0;
+    this.master.connect(this.ac.destination);
+  },
+  setOn(v){
+    this.on=v;
+    if(this.master) this.master.gain.value=v?0.5:0;
+    $("snd").textContent=v?"🔊 Sound: on":"🔈 Sound: off";
+  },
+  tone(freq,dur,type,vol,slideTo,delay){
+    if(!this.ac||!this.on) return;
+    const t=this.ac.currentTime+(delay||0),o=this.ac.createOscillator(),g=this.ac.createGain();
+    o.type=type||"square";
+    o.frequency.setValueAtTime(freq,t);
+    if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo,t+dur);
+    g.gain.setValueAtTime(vol||0.04,t);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.connect(g);g.connect(this.master);
+    o.start(t);o.stop(t+dur+0.05);
+  },
+  noise(dur,vol,freq,q,delay){
+    if(!this.ac||!this.on) return;
+    const t=this.ac.currentTime+(delay||0),n=Math.max(1,Math.floor(this.ac.sampleRate*dur));
+    const buf=this.ac.createBuffer(1,n,this.ac.sampleRate),d=buf.getChannelData(0);
+    for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+    const src=this.ac.createBufferSource(),f=this.ac.createBiquadFilter(),g=this.ac.createGain();
+    src.buffer=buf;f.type="bandpass";f.frequency.value=freq||1000;f.Q.value=q||1;
+    g.gain.setValueAtTime(vol||0.05,t);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    src.connect(f);f.connect(g);g.connect(this.master);
+    src.start(t);
+  },
+  kazoo(freq,dur,at){
+    if(!this.ac||!this.on) return;
+    const o=this.ac.createOscillator(),lfo=this.ac.createOscillator(),lg=this.ac.createGain();
+    const f=this.ac.createBiquadFilter(),g=this.ac.createGain();
+    o.type="sawtooth";o.frequency.value=freq;
+    lfo.frequency.value=5+Math.random()*3;lg.gain.value=freq*0.04;
+    lfo.connect(lg);lg.connect(o.frequency);
+    f.type="bandpass";f.frequency.value=1100;f.Q.value=2.5;
+    g.gain.setValueAtTime(0.0001,at);g.gain.exponentialRampToValueAtTime(0.03,at+0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001,at+dur);
+    o.connect(f);f.connect(g);g.connect(this.master);
+    o.start(at);lfo.start(at);o.stop(at+dur+0.05);lfo.stop(at+dur+0.05);
+  },
+  babble(){this.tone(170+Math.random()*260,0.07,"square",0.02,110+Math.random()*320);},
+  sneeze(big){this.tone(300,0.35,"sine",0.05,big?1400:900);this.noise(big?0.6:0.3,big?0.1:0.07,2500,0.7,0.35);},
+  shake(){this.noise(0.09,0.06,5200,2);},
+  squelch(){this.noise(0.14,0.05,350+Math.random()*200,4);},
+  tick(){this.tone(1300,0.03,"square",0.025);},
+  meow(){this.tone(760,0.45,"sawtooth",0.03,470);},
+  ding(){this.tone(880,0.25,"triangle",0.05,830);this.tone(1175,0.3,"triangle",0.04,1100,0.12);},
+  boing(){this.tone(220,0.4,"sine",0.06,90);},
+  splat(){this.noise(0.25,0.08,180,1.5);}
+};
+const midi=m=>440*Math.pow(2,(m-69)/12);
+
+function music(){
+  if(!Snd.ac||!Snd.on||scene!=="play") return;
+  const now=Snd.ac.currentTime;
+  if(musicAt<now) musicAt=now+0.05;
+  while(musicAt<now+0.25){
+    const n=MELODY[musicI%MELODY.length];
+    if(n!==null){
+      const m=n+(Math.random()<0.22?(Math.random()<0.5?-1:1):0);
+      Snd.kazoo(midi(m),0.3,musicAt);
+      // the smoke alarm sings along
+      if(STEPS[step]==="bake"&&alarmSinging(bakeT)){
+        const o=Snd.ac.createOscillator(),g=Snd.ac.createGain();
+        o.type="square";o.frequency.value=midi(m+24);
+        g.gain.setValueAtTime(0.008,musicAt);g.gain.exponentialRampToValueAtTime(0.0001,musicAt+0.28);
+        o.connect(g);g.connect(Snd.master);o.start(musicAt);o.stop(musicAt+0.3);
+      }
+    }
+    musicAt+=0.32;musicI++;
+  }
+}
+
+// ---------- wobbly drawing ----------
+function rnd(seed){const x=Math.sin(seed*127.1+boil*311.7)*43758.5453;return x-Math.floor(x);}
+function wob(id,i){return (rnd(id*13.7+i*7.3)-0.5)*3.2;}
+function fillStroke(fill,stroke,lw){
+  if(fill){ctx.fillStyle=fill;ctx.fill();}
+  if(stroke!==false){ctx.strokeStyle=stroke||"#3b1f0b";ctx.lineWidth=lw||3;ctx.stroke();}
+}
+function blob(id,x,y,rx,ry,fill,stroke,lw){
+  ctx.beginPath();
+  const n=16;
+  for(let i=0;i<n;i++){
+    const a=i/n*Math.PI*2,px=x+Math.cos(a)*(rx+wob(id,i)),py=y+Math.sin(a)*(ry+wob(id,i+50));
+    i?ctx.lineTo(px,py):ctx.moveTo(px,py);
+  }
+  ctx.closePath();fillStroke(fill,stroke,lw);
+}
+function wrect(id,x,y,w,h,fill,stroke,lw){
+  ctx.beginPath();
+  ctx.moveTo(x+wob(id,1),y+wob(id,2));ctx.lineTo(x+w+wob(id,3),y+wob(id,4));
+  ctx.lineTo(x+w+wob(id,5),y+h+wob(id,6));ctx.lineTo(x+wob(id,7),y+h+wob(id,8));
+  ctx.closePath();fillStroke(fill,stroke,lw);
+}
+function wline(id,x1,y1,x2,y2,color,lw){
+  ctx.beginPath();ctx.moveTo(x1+wob(id,1),y1+wob(id,2));
+  ctx.quadraticCurveTo((x1+x2)/2+wob(id,3)*2,(y1+y2)/2+wob(id,4)*2,x2+wob(id,5),y2+wob(id,6));
+  ctx.strokeStyle=color||"#3b1f0b";ctx.lineWidth=lw||3;ctx.stroke();
+}
+function txt(s,x,y,size,color,align,rot){
+  ctx.save();ctx.translate(x,y);if(rot) ctx.rotate(rot);
+  ctx.font=(size||18)+'px "Comic Sans MS","Comic Sans","Chalkboard SE","Comic Neue",cursive';
+  ctx.textAlign=align||"left";ctx.textBaseline="middle";ctx.fillStyle=color||"#2b1d0e";
+  ctx.fillText(s,0,0);ctx.restore();
+}
+function wrap(s,maxW,size){
+  ctx.font=size+'px "Comic Sans MS","Comic Sans","Chalkboard SE","Comic Neue",cursive';
+  const words=s.split(" "),lines=[];let line="";
+  for(const w of words){
+    const t=line?line+" "+w:w;
+    if(ctx.measureText(t).width>maxW&&line){lines.push(line);line=w;}else line=t;
+  }
+  if(line) lines.push(line);
+  return lines;
+}
+const rgb=c=>"rgb("+c.join(",")+")";
+
+const paper=document.createElement("canvas");
+paper.width=W;paper.height=H;
+(function wallpaper(){
+  const p=paper.getContext("2d");
+  p.fillStyle="#2e8b84";p.fillRect(0,0,W,H);
+  let s=7;const r=()=>{s=(s*16807)%2147483647;return s/2147483647;};
+  for(let y=20;y<H;y+=60) for(let x=(y/60%2)*40;x<W;x+=80){
+    const cx=x+r()*14,cy=y+r()*14;
+    p.fillStyle=["#e8b730","#f06292","#c0ca33"][Math.floor(r()*3)];
+    for(let k=0;k<5;k++){p.beginPath();p.arc(cx+Math.cos(k*1.3)*9,cy+Math.sin(k*1.3)*9,6+r()*3,0,7);p.fill();}
+    p.fillStyle="#6d4c41";p.beginPath();p.arc(cx,cy,4,0,7);p.fill();
+    p.fillStyle="#ff80ab";p.fillRect(cx+30,cy+20,4,4);
+  }
+})();
+
+// ---------- scene pieces ----------
+function drawGrandma(){
+  wrect(1,18,18,170,195,"#a1887f","#5d4037",6);
+  wrect(2,30,30,146,171,"#ffe0b2");
+  blob(3,103,105,44,52,"#f5c6a5");
+  for(let i=0;i<7;i++) blob(10+i,66+i*12,62+Math.sin(i)*8,13,12,"#e0e0e0","#9e9e9e",2);
+  blob(20,86,103,12,9,"rgba(255,255,255,.4)","#4e342e",3);
+  blob(21,120,103,12,9,"rgba(255,255,255,.4)","#4e342e",3);
+  wline(22,98,103,108,103,"#4e342e",3);
+  ctx.fillStyle="#3e2723";ctx.fillRect(84,101,4,4);ctx.fillRect(118,101,4,4);
+  wline(23,90,135,116,133,"#b71c1c",4);
+  blob(24,103,190,58,26,rgb(CARDIGAN));
+  blob(25,160,165,26,22,"#f5c6a5"); // a very big hand
+  txt("NANA",103,206,13,"#5d4037","center");
+}
+function drawBubble(){
+  const shown=bubble.text.slice(0,Math.floor(bubble.shown));
+  const lines=wrap(shown,300,19);
+  const h=Math.max(70,26+lines.length*25);
+  wrect(30,200,24,330,h,"#fffef5","#3b1f0b",3);
+  ctx.beginPath();ctx.moveTo(205,60);ctx.lineTo(180,80);ctx.lineTo(210,80);ctx.closePath();ctx.fillStyle="#fffef5";ctx.fill();
+  lines.forEach((l,i)=>txt(l,214,48+i*25,19,"#2b1d0e"));
+  if(reaction.t>0) txt(reaction.text,214,40+h,18,"#c62828","left",-0.02);
+}
+function drawWindow(){
+  wrect(40,WINDOW.x,WINDOW.y,WINDOW.w,WINDOW.h,"#90caf9","#6d4c41",8);
+  wline(41,WINDOW.x+WINDOW.w/2,WINDOW.y,WINDOW.x+WINDOW.w/2,WINDOW.y+WINDOW.h,"#6d4c41",6);
+  wline(42,WINDOW.x,WINDOW.y+WINDOW.h/2,WINDOW.x+WINDOW.w,WINDOW.y+WINDOW.h/2,"#6d4c41",6);
+  if(STEPS[step]==="bake"&&scene==="play"&&catVisible(bakeT)){
+    blob(43,WINDOW.x+75,WINDOW.y+92,34,28,"#ff9800");
+    ctx.beginPath();ctx.moveTo(WINDOW.x+48,WINDOW.y+75);ctx.lineTo(WINDOW.x+55,WINDOW.y+50);ctx.lineTo(WINDOW.x+68,WINDOW.y+68);
+    ctx.moveTo(WINDOW.x+82,WINDOW.y+68);ctx.lineTo(WINDOW.x+95,WINDOW.y+50);ctx.lineTo(WINDOW.x+102,WINDOW.y+75);
+    fillStroke("#ff9800");
+    ctx.fillStyle="#1b5e20";ctx.fillRect(WINDOW.x+62,WINDOW.y+86,6,6);ctx.fillRect(WINDOW.x+84,WINDOW.y+86,6,6);
+    txt("sniff sniff",WINDOW.x+75,WINDOW.y+WINDOW.h+16,15,"#fff","center",0.05);
+  }
+}
+function drawCardigan(){
+  const x=770;
+  wline(50,x,34,x,50,"#5d4037",5);
+  ctx.beginPath();
+  ctx.moveTo(x-33,54);ctx.lineTo(x+32,54);ctx.lineTo(x+62,88);ctx.lineTo(x+47,100);ctx.lineTo(x+35,88);
+  ctx.lineTo(x+35,158);ctx.lineTo(x-35,158);ctx.lineTo(x-35,88);ctx.lineTo(x-48,100);ctx.lineTo(x-63,88);ctx.closePath();
+  fillStroke(rgb(CARDIGAN),"#33691e",3);
+  for(let i=0;i<4;i++) blob(51+i,x,78+i*20,4,4,"#fdd835",false);
+  txt("Nana's cardigan",x,172,13,"#fff","center");
+}
+function drawNote(){
+  // Bert's sticky note, with an arrow down to the dial
+  ctx.save();ctx.translate(NOTE.x,NOTE.y);ctx.rotate(-0.1);
+  ctx.fillStyle="#fff176";ctx.fillRect(0,0,92,52);
+  txt("this oven",6,12,12,"#1a237e");txt("runs cold!",6,27,12,"#1a237e");txt("- Bert",40,43,12,"#1a237e");
+  ctx.restore();
+  wline(56,NOTE.x+30,NOTE.y+58,DIAL.x+8,DIAL.y-62,"#1a237e",3);
+}
+function drawOven(){
+  wrect(60,OVEN.x,OVEN.y,OVEN.w,OVEN.h,"#eeeeee","#424242",4);
+  wrect(61,OVEN.x+10,OVEN.y+10,OVEN.w-20,145,"#bdbdbd","#424242",3);
+  // the dial: labels around it
+  for(let i=0;i<OVEN_LABELS.length;i++){
+    const ang=-Math.PI*0.85+i*(Math.PI*1.7/(OVEN_LABELS.length-1));
+    const lx=DIAL.x+Math.sin(ang)*68,ly=DIAL.y-Math.cos(ang)*52;
+    txt(OVEN_LABELS[i],lx,ly,11,i===dialIndex(dial.a)?"#d50000":"#212121","center",ang*0.3);
+  }
+  blob(62,DIAL.x,DIAL.y,DIAL.r,DIAL.r,"#795548");
+  const da=-Math.PI*0.85+dial.a*(Math.PI*1.7/(OVEN_LABELS.length-1));
+  wline(63,DIAL.x,DIAL.y,DIAL.x+Math.sin(da)*DIAL.r,DIAL.y-Math.cos(da)*DIAL.r,"#ffeb3b",5);
+  // door and tinted glass
+  wrect(64,OVEN.x+10,OVEN.y+165,OVEN.w-20,OVEN.h-175,"#e0e0e0","#424242",3);
+  wrect(65,GLASS.x,GLASS.y,GLASS.w,GLASS.h,"#3e2723","#212121",4);
+  if(STEPS[step]==="bake"&&scene==="play"){
+    const c=bakeT<BAKE_OK[0]?[250,235,180]:bakeT<=BAKE_OK[1]?[214,160,60]:bakeT<BAKE_ALARM?[120,70,30]:[30,20,15];
+    blob(66,GLASS.x+GLASS.w/2,GLASS.y+GLASS.h/2+12,50,22,rgb(c));
+  }
+  ctx.fillStyle="rgba(150,90,20,.62)";ctx.fillRect(GLASS.x,GLASS.y,GLASS.w,GLASS.h);
+  txt("Bert's tinted glass",GLASS.x+GLASS.w/2,GLASS.y+GLASS.h+16,11,"#424242","center");
+  wline(67,OVEN.x+40,OVEN.y+180,OVEN.x+OVEN.w-40,OVEN.y+180,"#757575",8);
+  drawNote();
+}
+function drawDog(){
+  ctx.save();ctx.translate(110,505);
+  if(dog.state==="fallen") ctx.rotate(Math.PI/2*Math.min(1,dog.t*3));
+  blob(70,0,0,58,30,"#8d6e63");
+  const s=dog.state==="sneeze"&&dog.t<0.5?1.25:1;
+  blob(71,48,-28,26*s,22*s,"#a1887f");
+  blob(72,32,-48,9,18,"#5d4037");
+  ctx.fillStyle="#000";ctx.fillRect(55,-34,5,5);
+  blob(73,72,-24,6,5,"#000",false);
+  for(const lx of [-36,-12,18,40]) wline(74+lx,lx,22,lx,46,"#5d4037",6);
+  txt("Biscuit",-10,62,14,"#fff","center");
+  if(dog.state==="sneeze"&&dog.t<1) txt("ACHOO!",80,-70,26,"#ffeb3b","center",-0.2);
+  if(dog.state==="fallen") txt("ACHOOOO!!",60,-80,24,"#ff5252","center",0.2);
+  ctx.restore();
+}
+function drawBowl(){
+  const name=STEPS[step];
+  blob(80,BOWL.x,BOWL.y+40,BOWL.rx*0.95,70,"#f06292","#880e4f",4);
+  blob(81,BOWL.x,BOWL.y,BOWL.rx,BOWL.ry,"#f8bbd0","#880e4f",4);
+  const inside=Math.min(1,flour/10);
+  if(step>=2||name==="stir"){
+    blob(82,BOWL.x,BOWL.y+6,BOWL.rx*0.85,BOWL.ry*0.7,rgb(stirColor(stir.p)),false);
+  }else if(flour>0.05){
+    blob(83,BOWL.x,BOWL.y+10-inside*14,BOWL.rx*(0.3+0.55*inside),BOWL.ry*(0.25+0.45*inside),"#fafafa","#bdbdbd",2);
+  }
+  if(salt>0&&step<2){for(let i=0;i<salt*3;i++) ctx.fillRect(BOWL.x-40+((i*37)%80),BOWL.y-6+((i*17)%16),3,3);}
+  if(name==="stir"&&scene==="play"){
+    wline(84,BOWL.x+Math.cos(stirAngle||0)*60,BOWL.y+Math.sin(stirAngle||0)*25,BOWL.x+Math.cos(stirAngle||0)*30,BOWL.y-90,"#a1887f",10);
+  }
+}
+function drawCounterProps(){
+  const name=scene==="play"?STEPS[step]:"";
+  if(name!=="flour"&&step<1) drawFlourBag(225,370,0);
+  if(name!=="salt"&&step<2) drawShaker(600,380);
+}
+function drawFlourBag(x,y,tilt){
+  ctx.save();ctx.translate(x,y);ctx.rotate(tilt);
+  wrect(90,-35,-50,70,95,"#fff8e1","#8d6e63",3);
+  txt("FLOWER",0,-10,14,"#6d4c41","center",-0.1);
+  txt("(sic)",0,10,11,"#6d4c41","center");
+  ctx.restore();
+}
+function drawShaker(x,y){
+  wrect(91,x-18,y-40,36,70,"#e3f2fd","#455a64",3);
+  const left=(SALT_MAX-saltUsed)/SALT_MAX;
+  ctx.fillStyle="#fafafa";ctx.fillRect(x-14,y+26-62*left,28,62*left);
+  blob(92,x,y-44,18,8,"#90a4ae");
+  ctx.save();ctx.translate(x,y);ctx.rotate(-Math.PI/2);
+  txt("1 GRANDMA PINCH",-5,0,9,"#b71c1c","center");
+  ctx.restore();
+}
+function drawTake(){
+  wrect(100,take.x,take.y,TAKE.w,TAKE.h,"#ff7043","#4a148c",4);
+  txt("TAKE IT OUT",take.x+TAKE.w/2,take.y+TAKE.h/2,20,"#fff","center",0.03);
+}
+function drawDone(){
+  wrect(101,DONE.x,DONE.y,DONE.w,DONE.h,stepT>1.5?"#76ff03":"#9e9e9e","#d500f9",4);
+  txt("DONE, GRANDMA",DONE.x+DONE.w/2,DONE.y+DONE.h/2,18,"#311b92","center",-0.03);
+}
+function drawSmoke(){
+  for(const s of smoke) blob(200+(s.id%40),s.x,s.y,s.r,s.r*0.8,"rgba(97,97,97,"+(0.5*s.life)+")",false);
+  ctx.save();ctx.translate(905,40);
+  blob(110,0,0,22,10,"#fafafa","#616161",2);
+  if(scene==="play"&&STEPS[step]==="bake"&&alarmSinging(bakeT)){txt("♪ ♫ ♪",-10,26,22,"#ffeb3b","center",Math.sin(boilT*3)*0.2);txt("la la la",-30,50,13,"#fff","center");}
+  ctx.restore();
+}
+function drawMitt(){
+  const name=scene==="play"?STEPS[step]:"";
+  if(name==="flour") drawFlourBag(mitt.x,mitt.y-55,-0.9+Math.sin(boilT*9)*Math.min(0.5,mitt.speed/1500));
+  if(name==="salt"&&saltUsed<SALT_MAX) drawShaker(mitt.x,mitt.y-60);
+  ctx.save();ctx.translate(mitt.x,mitt.y);ctx.rotate(-0.25);
+  blob(120,0,0,30,36,"#ff8a65","#bf360c",4);
+  blob(121,-30,6,12,20,"#ff8a65","#bf360c",4);
+  for(let i=0;i<3;i++) wline(122+i,-22+i*14,-30,-22+i*14,30,"#ffeb3b",3);
+  wrect(126,-28,30,56,18,"#ffccbc","#bf360c",3);
+  ctx.restore();
+}
+function drawStepTag(){
+  if(scene!=="play") return;
+  // above the credit bar, which covers the bottom of the canvas on short windows
+  txt("Step "+(step+1)+" of 5: "+LABELS[STEPS[step]],210,560,17,"#fff","left",-0.01);
+}
+
+function draw(){
+  ctx.drawImage(paper,0,0);
+  drawWindow();
+  drawCardigan();
+  drawGrandma();
+  wrect(130,0,430,715,170,"#c8a04a","#6d4c41",4); // counter
+  for(let i=0;i<8;i++) wline(131+i,0,450+i*20,715,452+i*20,"rgba(109,76,65,.35)",2);
+  drawOven();
+  drawDog();
+  drawCounterProps();
+  drawBowl();
+  for(const s of specks){ctx.fillStyle=s.c;ctx.fillRect(s.x,s.y,4,4);}
+  drawSmoke();
+  if(scene==="play"){
+    drawBubble();
+    if(STEPS[step]==="bake") drawTake(); else drawDone();
+  }
+  drawStepTag();
+  drawMitt();
+}
+
+// ---------- game flow ----------
+function say(text){bubble={text,shown:0};}
+function react(text,secs){reaction={text,t:secs||2.5};}
+function inRect(p,r,w,h){return p.x>=r.x&&p.x<=r.x+(w||r.w)&&p.y>=r.y&&p.y<=r.y+(h||r.h);}
+function overBowl(){return Math.hypot((mitt.x-BOWL.x)/1.6,mitt.y-55-BOWL.y)<95;}
+
+function newGame(){
+  run={};flour=0;spilled=0;salt=0;saltUsed=0;stir={first:0,p:0};stirAngle=null;stirAcc=0;lastWrongAt=-9;
+  dial={a:0,v:0,drag:false};lastIdx=0;settleT=0;
+  bakeT=0;take={x:DODGE[0].x,y:DODGE[0].y};dodges=0;catSeen=false;smokeSaid=false;alarmSaid=false;
+  dog={state:"idle",t:0};specks=[];smoke=[];
+  $("title").classList.add("hidden");$("judge").classList.add("hidden");
+  if(document.activeElement&&document.activeElement.blur) document.activeElement.blur();
+  scene="play";startStep(0);
+}
+function startStep(i){
+  step=i;stepT=0;reaction.t=0;
+  say(SAID[STEPS[i]]);
+}
+function finishStep(){
+  const name=STEPS[step];
+  if(name==="flour") run.flour=r2(flour);
+  if(name==="salt") run.salt=salt;
+  if(name==="stir") run.stir=r2(stir.p);
+  if(name==="oven") run.oven=dialIndex(dial.a);
+  if(name==="bake"){run.bake=r2(bakeT);showJudge();return;}
+  Snd.ding();
+  startStep(step+1);
+}
+
+function updFlour(dt){
+  const squeeze=(mouse.down||keys[" "])?0.8:0;
+  const shake=clamp((mitt.speed-400)/800,0,1)*1.2;
+  const rate=squeeze+shake;
+  if(rate<=0) return;
+  const before=flour;
+  if(overBowl()) flour+=rate*dt; else spilled+=rate*dt;
+  if(Math.random()<rate*dt*12) specks.push({x:mitt.x-20+Math.random()*30,y:mitt.y-20,vy:60,c:"#fafafa",life:1.4});
+  if(before<FLOUR_OK[0]&&flour>=FLOUR_OK[0]){dog={state:"sneeze",t:0};Snd.sneeze(false);react("Bless you, Biscuit.");}
+  if(before<=FLOUR_OK[1]&&flour>FLOUR_OK[1]){dog={state:"fallen",t:0};Snd.sneeze(true);react("Oh dear. Biscuit's had enough.");}
+  if(before<=13&&flour>13) react("That's a pillow now, dear.");
+  if(spilled>1&&spilled-rate*dt<=1) react("Mind my floor!");
+}
+function updSalt(){
+  if(!(clicked||pressed.s||pressed.S)) return;
+  if(saltUsed>=SALT_MAX){react("It's empty. That was the pinch.");return;}
+  saltUsed++;Snd.shake();
+  if(overBowl()){
+    salt++;
+    for(let i=0;i<6;i++) specks.push({x:mitt.x-10+Math.random()*20,y:mitt.y-30,vy:80,c:"#ffffff",life:0.6});
+    if(salt===1) react("That's one of YOUR pinches.");
+    if(salt===6) react("Keep going. My hands are bigger than yours.");
+  }else{
+    react("On the floor? Really?");
+    for(let i=0;i<6;i++) specks.push({x:mitt.x-10+Math.random()*20,y:mitt.y-30,vy:80,c:"#eceff1",life:1.2});
+  }
+  if(saltUsed===SALT_MAX) react(salt>=SALT_OK?"There. One pinch.":"Well, it's empty now.");
+}
+function updStir(dt){
+  let d=0;
+  if(keys.ArrowLeft) d-=dt*4;
+  if(keys.ArrowRight) d+=dt*4;
+  const dx=mitt.x-BOWL.x,dy=(mitt.y-BOWL.y)*2.2,dist=Math.hypot(dx,dy);
+  if(dist>15&&dist<260){
+    const a=Math.atan2(dy,dx);
+    if(stirAngle!==null&&!d){
+      d=a-stirAngle;
+      if(d>Math.PI) d-=2*Math.PI;
+      if(d<-Math.PI) d+=2*Math.PI;
+      if(Math.abs(d)<0.01) d=0;
+    }
+    stirAngle=a;
+  }else if(d) stirAngle=(stirAngle||0)+d;
+  if(!d) return;
+  stir=stirStep(stir,d);
+  stirAcc+=Math.abs(d);
+  if(stirAcc>0.6){stirAcc=0;Snd.squelch();}
+  if(stir.wrong&&stepT-lastWrongAt>2.2){lastWrongAt=stepT;react("No, the OTHER way!");}
+  if(!stir.wrong&&stir.p>0.9&&stepT-lastWrongAt>2.2){lastWrongAt=stepT;react("Goodness, that's gone grey.");}
+}
+function updOven(dt){
+  if(clicked&&Math.hypot(mitt.x-DIAL.x,mitt.y-DIAL.y)<DIAL.r+40) dial.drag=true;
+  if(!mouse.down) dial.drag=false;
+  if(dial.drag) dial.v-=(mitt.x-mitt.px)*0.06; // turns the wrong way
+  if(pressed.ArrowRight) dial.v-=2.5;
+  if(pressed.ArrowLeft) dial.v+=2.5;
+  dial.a+=dial.v*dt;
+  dial.v*=Math.exp(-dt*1.6);
+  if(dial.a<0){dial.a=0;dial.v=-dial.v*0.5;Snd.boing();}
+  if(dial.a>OVEN_LABELS.length-1){dial.a=OVEN_LABELS.length-1;dial.v=-dial.v*0.5;Snd.boing();}
+  if(Math.abs(dial.v)<0.35&&!dial.drag){dial.a+=(Math.round(dial.a)-dial.a)*Math.min(1,dt*6);dial.v*=0.8;}
+  const idx=dialIndex(dial.a);
+  if(idx!==lastIdx){lastIdx=idx;Snd.tick();settleT=0;}
+  settleT+=dt;
+  if(settleT>0.8&&settleT-dt<=0.8){
+    if(idx===3) react("Nice! ...on MY oven, anyway.");
+    if(idx===6) react("Are we baking or launching?");
+  }
+}
+function updBake(dt){
+  const before=bakeT;
+  bakeT+=dt;
+  if(catVisible(bakeT)&&!catSeen){catSeen=true;Snd.meow();react("Mrs. Patel's cat smells something.");}
+  if(bakeT>=BAKE_SMOKE&&!smokeSaid){smokeSaid=true;react("Is something burning? No, that's normal.",3);}
+  if(alarmSinging(bakeT)&&!alarmSaid){alarmSaid=true;react("Oh listen, the alarm's singing my song.",3);}
+  if(Math.random()<smokeLevel(bakeT)*dt*14) smoke.push({id:smoke.length,x:OVEN.x+40+Math.random()*150,y:OVEN.y,r:14+Math.random()*12,life:1});
+  // the button is shy at first
+  const near=Math.hypot(mitt.x-(take.x+TAKE.w/2),mitt.y-(take.y+TAKE.h/2))<95;
+  if(near&&dodges<3&&before>0.6){
+    dodges++;take={x:DODGE[dodges].x,y:DODGE[dodges].y};react("Patience!",1.5);Snd.boing();
+  }
+  if((clicked&&inRect(mitt,take,TAKE.w,TAKE.h))||pressed[" "]||pressed.Enter||bakeT>=BAKE_MAX){
+    Snd.splat();finishStep();
+  }
+}
+
+function showJudge(){
+  scene="judge";
+  const s=scoreRun(run),v=verdict(s.total),name=bakedName(run,s);
+  $("j-hearts").textContent="❤️".repeat(v.hearts)+"🖤".repeat(5-v.hearts)+"  ("+s.total.toFixed(2)+" / 5)";
+  $("j-line").textContent="Grandma: “"+v.line+"”";
+  $("j-name").textContent=name;
+  const tb=$("j-table");tb.textContent="";
+  for(const k of STEPS){
+    const tr=document.createElement("tr");
+    const a=document.createElement("td"),b=document.createElement("td"),c=document.createElement("td");
+    a.textContent=LABELS[k]+" "+Math.round(s[k]*100)+"%";
+    b.textContent="She said: “"+SAID[k]+"”";
+    const good=s[k]===1;
+    c.textContent=good?"✔ You worked it out.":"She meant: "+MEANT[k];
+    c.className=good?"ok":"bad";
+    tr.append(a,b,c);tb.append(tr);
+  }
+  $("judge").classList.remove("hidden");
+  try{
+    const best=Math.max(v.hearts,+(localStorage.getItem("grandma-best")||0));
+    localStorage.setItem("grandma-best",best);
+  }catch(e){}
+  $("again").focus();
+}
+function showTitle(){
+  scene="title";
+  $("judge").classList.add("hidden");$("title").classList.remove("hidden");
+  try{const b=+(localStorage.getItem("grandma-best")||0);$("best").textContent=b?"Your best so far: "+"❤️".repeat(b):"";}catch(e){}
+}
+
+function update(dt){
+  boilT+=dt;boil=Math.floor(boilT*6);
+  const mirror=scene==="play"&&STEPS[step]==="stir";
+  const tx=(mirror?2*BOWL.x-mouse.x:mouse.x)+35,ty=mouse.y+25;
+  const k=1-Math.exp(-dt*4);
+  mitt.px=mitt.x;mitt.py=mitt.y;
+  mitt.x+=(tx-mitt.x)*k;mitt.y+=(ty-mitt.y)*k;
+  mitt.speed=Math.hypot(mitt.x-mitt.px,mitt.y-mitt.py)/Math.max(dt,1e-3);
+  for(const s of specks){s.y+=s.vy*dt;s.vy+=400*dt;s.life-=dt;if(s.y>590){s.y=590;s.vy=0;}}
+  specks=specks.filter(s=>s.life>0||s.y>=590).slice(-400);
+  for(const s of smoke){s.y-=40*dt;s.x+=Math.sin(s.y/30)*20*dt;s.r+=8*dt;s.life-=dt*0.35;}
+  smoke=smoke.filter(s=>s.life>0);
+  dog.t+=dt;if(dog.state==="sneeze"&&dog.t>1.2) dog.state="idle";
+  if(scene==="play"){
+    const n0=Math.floor(bubble.shown);
+    bubble.shown=Math.min(bubble.text.length,bubble.shown+dt*38);
+    for(let i=n0;i<Math.floor(bubble.shown);i++) if(i%2===0&&/[a-z]/i.test(bubble.text[i])) Snd.babble();
+    reaction.t-=dt;
+    stepT+=dt;
+    const name=STEPS[step];
+    if(name==="flour") updFlour(dt);
+    else if(name==="salt") updSalt(dt);
+    else if(name==="stir") updStir(dt);
+    else if(name==="oven") updOven(dt);
+    if(scene==="play"&&name==="bake") updBake(dt);
+    else if(scene==="play"&&stepT>1.5&&((clicked&&inRect(mitt,DONE))||pressed.Enter)) finishStep();
+    music();
+  }
+  clicked=false;pressed={};
+}
+
+let last=performance.now();
+function frame(now){
+  const dt=Math.min(0.05,Math.max(0,(now-last)/1000));
+  last=now;
+  update(dt);draw();
+  requestAnimationFrame(frame);
+}
+
+function toCanvas(e){
+  const r=cv.getBoundingClientRect();
+  return {x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height};
+}
+cv.addEventListener("pointermove",e=>{const p=toCanvas(e);mouse.x=p.x;mouse.y=p.y;});
+cv.addEventListener("pointerdown",e=>{const p=toCanvas(e);mouse.x=p.x;mouse.y=p.y;mouse.down=true;clicked=true;Snd.init();});
+window.addEventListener("pointerup",()=>{mouse.down=false;});
+window.addEventListener("keydown",e=>{
+  if(scene==="play"&&[" ","ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) e.preventDefault();
+  if(!e.repeat) pressed[e.key]=true;
+  keys[e.key]=true;
+  if((e.key==="m"||e.key==="M")&&!e.repeat) Snd.setOn(!Snd.on);
+});
+window.addEventListener("keyup",e=>{keys[e.key]=false;});
+window.addEventListener("blur",()=>{keys={};mouse.down=false;});
+document.addEventListener("visibilitychange",()=>{
+  if(!Snd.ac) return;
+  if(document.hidden) Snd.ac.suspend(); else Snd.ac.resume();
+});
+$("start").addEventListener("click",()=>{Snd.init();if(Snd.ac&&Snd.ac.state==="suspended") Snd.ac.resume();newGame();});
+$("again").addEventListener("click",()=>{Snd.init();newGame();});
+$("totitle").addEventListener("click",showTitle);
+$("snd").addEventListener("click",()=>{Snd.init();Snd.setOn(!Snd.on);});
+
+function runSelfTest(){
+  const t0=performance.now(),P=selfTestLogic();
+  if(!ctx) P.push("no 2D canvas");
+  for(const id of ["title","judge","start","again","totitle","snd","credit"]) if(!$(id)) P.push("missing element #"+id);
+  const ms=Math.round(performance.now()-t0);
+  const el=$("selftest");
+  el.textContent="Grandma's Famous Whatever self-test (v"+VERSION+")\n"+
+    (P.length?P.length+" problem(s):\n"+P.slice(0,30).join("\n"):"No problems found.")+
+    "\nRan in "+ms+" ms. Click to close.";
+  el.classList.remove("hidden");
+  el.addEventListener("click",()=>el.classList.add("hidden"));
+}
+
+showTitle();
+if(location.hash==="#selftest") runSelfTest();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
